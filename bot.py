@@ -232,18 +232,22 @@ class TranslationTask:
     targets: List[Lang]  # 例如 ["en"] 或 ["zh", "en"]
 
 
-async def translate_with_openai(text: str, task: TranslationTask) -> Dict[str, Optional[str]]:
-    """呼叫 OpenAI 進行翻譯：
-    回傳格式：{"en": str | None, "zh": str | None}
-    """
-    # 根據目標語言組建明確、簡潔的指令
-    target_desc = ", ".join([{"en": "English", "zh": "Chinese", "other": ""}.get(t, "") for t in task.targets if t in ("en", "zh")])
+async def translate_with_openai(text: str, task) -> Dict[str, Optional[str]]:
+    """呼叫 OpenAI 進行翻譯，強制 JSON 格式輸出，完整保留換行"""
+    target_desc = ", ".join([{"en": "English", "zh": "Chinese"}.get(t, t) for t in task.targets])
+
     user_prompt = (
-        f"Translate the following message into {target_desc}.\n"
-        f"Message:\n{text}"
+        f"Translate the following message into {target_desc}. "
+        "Output ONLY in JSON with keys 'en' and 'zh'. "
+        "Preserve all line breaks exactly as in the original.\n\n"
+        f"Message:\n{text}\n\n"
+        "Example:\n"
+        "{\n"
+        "  \"en\": \"<English translation with same line breaks>\",\n"
+        "  \"zh\": \"<Chinese translation with same line breaks>\"\n"
+        "}"
     )
 
-    # 重試邏輯（臨時網路/429 等）
     for attempt in range(1, MAX_RETRIES + 1):
         try:
             resp = openai_client.chat.completions.create(
@@ -254,56 +258,19 @@ async def translate_with_openai(text: str, task: TranslationTask) -> Dict[str, O
                 ],
                 temperature=0.2,
             )
-            out = resp.choices[0].message.content.strip()
 
-            # 嘗試解析：如果需要中+英雙輸出，建議使用簡單分隔；
-            # 這裡採用啟發式：若需要兩種語言，請模型以 JSON 回傳會更穩定。
-            if len(task.targets) == 2 and set(task.targets) == {"zh", "en"}:
-                # 再次要求 JSON（單次輸出即可，避免再次 API 呼叫）：
-                # 為簡化，我們在同一次回答中請模型直接輸出 JSON。
-                # 若模型未按 JSON 輸出，嘗試 heuristics 切割。
-                # 這裡直接包裝為單語輸出的情況（因我們主 prompt 未強制 JSON）。
-                # 實務可改為：改寫 user_prompt，要求輸出 JSON（建議）。
-                # 為避免改動大，這裡先用簡單規則：
-                zh_guess, en_guess = None, None
-                # 先嘗試偵測是否包含中英文分段標籤
-                m_zh = re.search(r"(?i)(Chinese|中文)\s*[:：]\s*(.+)$", out, flags=re.MULTILINE)
-                m_en = re.search(r"(?i)(English|英文)\s*[:：]\s*(.+)$", out, flags=re.MULTILINE)
-                if m_zh:
-                    zh_guess = m_zh.group(2).strip()
-                if m_en:
-                    en_guess = m_en.group(2).strip()
-                if not (zh_guess or en_guess):
-                    # 無法可靠切分，則重用一次請求，要求 JSON（小量額外成本）
-                    resp2 = openai_client.chat.completions.create(
-                        model=MODEL_NAME,
-                        messages=[
-                            {"role": "system", "content": SYSTEM_PROMPT},
-                            {"role": "user", "content": (
-                                "Return a pure JSON object with two keys: 'zh' and 'en'.\n"
-                                "Do not include any extra text.\n"
-                                f"Translate this message into both Chinese and English: {text}"
-                            )},
-                        ],
-                        temperature=0.2,
-                    )
-                    out2 = resp2.choices[0].message.content.strip()
-                    try:
-                        data = json.loads(out2)
-                        return {"zh": data.get("zh"), "en": data.get("en")}
-                    except Exception:
-                        # 退而求其次：全部丟給英文欄位
-                        return {"zh": None, "en": out}
-                return {"zh": zh_guess, "en": en_guess}
+            output = resp.choices[0].message.content.strip()
 
-            # 單一目標語言：
-            if task.targets == ["en"]:
-                return {"zh": None, "en": out}
-            if task.targets == ["zh"]:
-                return {"zh": out, "en": None}
-
-            # 其他情況（保險）：全部塞英文欄位
-            return {"zh": None, "en": out}
+            # 嘗試解析 JSON
+            try:
+                parsed = json.loads(output)
+                return {
+                    "zh": parsed.get("zh"),
+                    "en": parsed.get("en")
+                }
+            except json.JSONDecodeError:
+                logger.warning("解析 GPT 回傳失敗，原始輸出：%s", output)
+                return {"zh": None, "en": output}
 
         except Exception as e:
             logger.warning("OpenAI 呼叫失敗（第 %d 次）：%s", attempt, e)
