@@ -1,0 +1,6 @@
+discord.py
+langdetect
+openai
+python-dotenv
+aiosqlite
+redis
