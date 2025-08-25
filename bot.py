@@ -132,15 +132,43 @@ def detect_lang(text: str) -> Lang:
 
 
 def should_skip(text: str) -> bool:
-    # 跳過空白 / 純網址 / 純標點或表情
+    stripped = text.strip()
+
+    # 跳過空白
     if WHITESPACE_PATTERN.match(text):
         return True
-    if URL_PATTERN.match(text.strip()):
+
+    # 跳過純網址
+    if URL_PATTERN.match(stripped):
         return True
-    # 純非文字（大多為 emoji 或符號），通常翻譯無意義
-    if ONLY_EMOJI_PATTERN.match(text) and len(text.strip()) <= 4:
+
+    # 跳過純 emoji 或符號
+    if ONLY_EMOJI_PATTERN.match(stripped):
         return True
+
     return False
+
+import re
+
+def extract_emojis(text: str):
+    emoji_pattern = re.compile(
+        "[\U0001F600-\U0001F64F"  # emoticons
+        "\U0001F300-\U0001F5FF"  # symbols & pictographs
+        "\U0001F680-\U0001F6FF"  # transport & map symbols
+        "\U0001F1E0-\U0001F1FF"  # flags (iOS)
+        "\U00002700-\U000027BF"  # Dingbats
+        "\U0001F900-\U0001F9FF"  # Supplemental Symbols and Pictographs
+        "\U00002600-\U000026FF"  # Misc symbols
+        "]+", flags=re.UNICODE
+    )
+    emojis = emoji_pattern.findall(text)
+    text_wo_emoji = emoji_pattern.sub("<EMOJI>", text)
+    return emojis, text_wo_emoji
+
+def restore_emojis(translated_text: str, emojis: list):
+    for emoji in emojis:
+        translated_text = translated_text.replace("<EMOJI>", emoji, 1)
+    return translated_text
 
 # -----------------------------
 # 快取層：Redis 或 SQLite
@@ -189,6 +217,8 @@ class TranslationCache:
         return json.dumps({"t": norm, "p": policy}, ensure_ascii=False)
 
     async def get(self, text: str, policy: str) -> Optional[Dict[str, Optional[str]]]:
+        if isinstance(text, list):
+            text = "\n".join(text) 
         key = self._make_key(text, policy)
         if self.use_redis and self.redis is not None:
             val = await self.redis.get(key)
@@ -316,38 +346,49 @@ async def process_message(message: Message):
     if should_skip(content):
         return
 
+    # 🔥 分離 emoji
+    clean_text, emojis = extract_emojis(content)
+
     # 2) 語言偵測
-    src_lang = detect_lang(content)
+    src_lang = detect_lang(clean_text if clean_text else content)
 
     # 3) 決策 / Policy
     task, policy = build_policy(src_lang)
 
     # 4) 快取策略
-    is_short = len(content) <= SHORT_MSG_MAX_CHARS
+    is_short = len(clean_text) <= SHORT_MSG_MAX_CHARS
     use_cache = is_short or CACHE_LONG_MESSAGES
 
     if use_cache:
-        cached = await cache.get(content, policy)
+        cached = await cache.get(clean_text, policy)
         if cached:
+            # 翻譯結果加回 emoji
+            cached["zh"] = restore_emojis(cached.get("zh") or "", emojis)
+            cached["en"] = restore_emojis(cached.get("en") or "", emojis)
             await send_translation(message, content, cached)
             return
 
     # 5) 翻譯
     try:
-        result = await translate_with_openai(content, task)
+        result = await translate_with_openai(clean_text, task)
     except Exception as e:
         logger.error("翻譯失敗：%s", e)
         return
 
+    # 翻譯後加回 emoji
+    result["zh"] = restore_emojis(result.get("zh") or "", emojis)
+    result["en"] = restore_emojis(result.get("en") or "", emojis)
+
     # 6) 寫入快取（依策略）
     if use_cache:
         try:
-            await cache.set(content, policy, result)
+            await cache.set(clean_text, policy, result)
         except Exception as e:
             logger.warning("寫入快取失敗：%s", e)
 
     # 7) 回覆
     await send_translation(message, content, result)
+
 
 
 async def send_translation(message: Message, original: str, result: Dict[str, Optional[str]]):
