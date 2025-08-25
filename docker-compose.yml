@@ -1,0 +1,11 @@
+version: "3.9"
+services:
+  dc-gpt-translator:
+    build: .
+    container_name: dc-gpt-translator
+    restart: unless-stopped
+    env_file:
+      - .env
+    volumes:
+      - .:/app
+    command: python bot.py
