@@ -37,6 +37,7 @@ import time
 from dataclasses import dataclass
 from typing import Dict, List, Literal, Optional, Tuple
 
+
 import discord
 from discord import Message
 from langdetect import DetectorFactory, detect, detect_langs
@@ -347,7 +348,8 @@ async def process_message(message: Message):
         return
 
     # 🔥 分離 emoji
-    clean_text, emojis = extract_emojis(content)
+    emojis, clean_text = extract_emojis(content)
+
 
     # 2) 語言偵測
     src_lang = detect_lang(clean_text if clean_text else content)
