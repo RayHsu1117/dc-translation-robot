@@ -102,7 +102,7 @@ LANG_NAMES_EN: Dict[str, str] = {
 }
 
 SYSTEM_PROMPT = (
-    "You are an expert, context-aware translator for casual chats. "
+    # "You are an expert, context-aware translator for casual chats. "
     "Translate the user's message following the instructions given. "
     "Be natural and idiomatic, preserve punctuation and simple formatting. "
     "Do not add explanations. Output only valid JSON."
