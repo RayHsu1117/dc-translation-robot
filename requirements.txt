@@ -1,5 +1,5 @@
-discord.py
-openai
-python-dotenv
-aiosqlite
-redis
+discord.py>=2.4,<3
+openai>=1.50,<3
+python-dotenv>=1.0,<2
+aiosqlite>=0.20,<1
+redis>=5,<7

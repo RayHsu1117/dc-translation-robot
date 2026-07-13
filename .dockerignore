@@ -3,3 +3,9 @@ __pycache__
 .env
 .git
 .gitignore
+*.sqlite3
+channel_langs.json
+channel_langs.json.tmp
+channel_langs.json.corrupt-*
+*.md
+tests/

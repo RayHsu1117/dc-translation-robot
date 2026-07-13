@@ -1,3 +1,6 @@
 .env
 *.sqlite3
 channel_langs.json
+channel_langs.json.tmp
+channel_langs.json.corrupt-*
+__pycache__/

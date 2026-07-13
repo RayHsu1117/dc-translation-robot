@@ -6,6 +6,12 @@ services:
     restart: unless-stopped
     env_file:
       - .env
+    environment:
+      # R6：runtime 資料寫到 named volume，不再寫進 repo 目錄
+      SQLITE_DB: /data/trans_cache.sqlite3
+      LANGS_FILE: /data/channel_langs.json
     volumes:
-      - .:/app
-    command: python bot.py
+      - bot-data:/data
+
+volumes:
+  bot-data:
